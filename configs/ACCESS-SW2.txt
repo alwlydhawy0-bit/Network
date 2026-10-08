@@ -1,0 +1,145 @@
+! =====================================================================
+!  ACCESS-SW2  |  Access switch (Floor 2: FINANCE, USERS, printer, guest Wi-Fi)  |  Cisco 2960-24TT
+!  Paste from the "Switch>" prompt (CLI tab).
+! =====================================================================
+enable
+configure terminal
+hostname ACCESS-SW2
+no ip domain-lookup
+ip domain-name corp.local
+service password-encryption
+service timestamps log datetime msec
+enable secret EnaSecret2026
+username netadmin privilege 15 secret NetAdmin2026
+banner motd # AUTHORIZED ACCESS ONLY - CORP device ACCESS-SW2. All activity is logged. #
+!
+! ---------------------------------------------------------------------
+! VLANs (VTP transparent - same VLAN database on every switch)
+! ---------------------------------------------------------------------
+vtp mode transparent
+vlan 10
+ name MANAGEMENT
+vlan 20
+ name IT
+vlan 30
+ name HR
+vlan 40
+ name FINANCE
+vlan 50
+ name USERS
+vlan 60
+ name SERVERS
+vlan 70
+ name GUEST
+vlan 80
+ name EXECUTIVE
+vlan 99
+ name NATIVE
+vlan 999
+ name PARKING
+exit
+spanning-tree mode rapid-pvst
+!
+! ---------------------------------------------------------------------
+! Management SVI (VLAN 10) - the switch is managed only via VLAN 10
+! ---------------------------------------------------------------------
+interface Vlan1
+ no ip address
+ shutdown
+interface Vlan10
+ description MGMT | ACCESS-SW2 management address
+ ip address 192.168.10.12 255.255.255.0
+ no shutdown
+ip default-gateway 192.168.10.1
+!
+! ---------------------------------------------------------------------
+! Uplink trunk to CORE-SW1 (pruned, native VLAN 99, no DTP)
+! ---------------------------------------------------------------------
+interface GigabitEthernet0/1
+ description TRUNK | to CORE-SW1 Gi0/2
+ switchport mode trunk
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,40,50,70,99
+ switchport nonegotiate
+ no shutdown
+!
+! ---------------------------------------------------------------------
+! End-host access ports - PortFast, BPDU Guard, sticky port security
+! (1 MAC per port; a second device on the port err-disables it)
+! ---------------------------------------------------------------------
+interface range FastEthernet0/1 - 5
+ switchport mode access
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ switchport port-security
+ switchport port-security maximum 1
+ switchport port-security mac-address sticky
+ switchport port-security violation shutdown
+ no shutdown
+interface FastEthernet0/1
+ description ACCESS | PC-FIN-01 | VLAN 40
+ switchport access vlan 40
+interface FastEthernet0/2
+ description ACCESS | PC-FIN-02 | VLAN 40
+ switchport access vlan 40
+interface FastEthernet0/3
+ description ACCESS | PC-USR-01 | VLAN 50
+ switchport access vlan 50
+interface FastEthernet0/4
+ description ACCESS | PC-USR-02 | VLAN 50
+ switchport access vlan 50
+interface FastEthernet0/5
+ description ACCESS | PRN-01 printer | VLAN 50
+ switchport access vlan 50
+!
+! Guest access point: the AP bridges wireless clients, so several MACs appear
+! on this port. No sticky learning; up to 5 MACs; excess frames are dropped
+! (restrict) instead of shutting the whole guest Wi-Fi down.
+interface FastEthernet0/6
+ description ACCESS | AP-GUEST-01 (SSID CORP-GUEST) | VLAN 70
+ switchport mode access
+ switchport access vlan 70
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ switchport port-security
+ switchport port-security maximum 5
+ switchport port-security violation restrict
+ no shutdown
+!
+! Unused ports - parked in black-hole VLAN 999 and shut down
+interface range FastEthernet0/7 - 24
+ description UNUSED - parked VLAN 999
+ switchport mode access
+ switchport access vlan 999
+ shutdown
+interface GigabitEthernet0/2
+ description UNUSED - parked VLAN 999
+ switchport mode access
+ switchport access vlan 999
+ shutdown
+!
+! ---------------------------------------------------------------------
+! Secure management
+! ---------------------------------------------------------------------
+access-list 10 remark SSH to this device only from the MANAGEMENT VLAN
+access-list 10 permit 192.168.10.0 0.0.0.255
+access-list 10 deny any
+crypto key generate rsa general-keys modulus 1024
+ip ssh version 2
+ip ssh time-out 60
+ip ssh authentication-retries 3
+line con 0
+ exec-timeout 10 0
+ logging synchronous
+ login local
+line vty 0 15
+ exec-timeout 10 0
+ login local
+ transport input ssh
+ access-class 10 in
+!
+ntp server 192.168.60.10
+logging host 192.168.60.10
+logging trap informational
+end
+write memory

@@ -1,0 +1,329 @@
+! =====================================================================
+!  CORE-SW1  |  Layer 3 collapsed core / inter-VLAN routing  |  Cisco 3560-24PS
+!  Paste from the "Switch>" prompt (CLI tab).
+! =====================================================================
+enable
+configure terminal
+hostname CORE-SW1
+no ip domain-lookup
+ip domain-name corp.local
+service password-encryption
+service timestamps log datetime msec
+enable secret EnaSecret2026
+username netadmin privilege 15 secret NetAdmin2026
+banner motd # AUTHORIZED ACCESS ONLY - CORP device CORE-SW1. All activity is logged. #
+!
+! ---------------------------------------------------------------------
+! VLANs (VTP transparent - VLANs are created locally on every switch)
+! ---------------------------------------------------------------------
+vtp mode transparent
+vlan 10
+ name MANAGEMENT
+vlan 20
+ name IT
+vlan 30
+ name HR
+vlan 40
+ name FINANCE
+vlan 50
+ name USERS
+vlan 60
+ name SERVERS
+vlan 70
+ name GUEST
+vlan 80
+ name EXECUTIVE
+vlan 99
+ name NATIVE
+vlan 999
+ name PARKING
+exit
+!
+spanning-tree mode rapid-pvst
+spanning-tree vlan 10,20,30,40,50,60,70,80,99 root primary
+!
+ip routing
+!
+! ---------------------------------------------------------------------
+! Inter-VLAN security ACLs - applied INBOUND on each client SVI.
+! Full rule-by-rule rationale: docs/05-security-acl-policy.md
+! Server objects: .10 SRV-DC01 (DNS/DHCP/AAA)  .20 SRV-WEB
+!                 .30 SRV-FILE (FTP)           .40 SRV-FINAPP (HTTPS)
+! ---------------------------------------------------------------------
+ip access-list extended VLAN10_MGMT_IN
+ remark MANAGEMENT - administrators have full access; anti-spoofing only
+ permit ip 192.168.10.0 0.0.0.255 any
+ deny ip any any
+!
+ip access-list extended VLAN20_IT_IN
+ remark DHCP discover/request (relayed to SRV-DC01)
+ permit udp any eq bootpc any eq bootps
+ remark Replies to sessions started by MANAGEMENT
+ permit icmp 192.168.20.0 0.0.0.255 192.168.10.0 0.0.0.255 echo-reply
+ permit tcp 192.168.20.0 0.0.0.255 192.168.10.0 0.0.0.255 established
+ remark No other access to the MANAGEMENT VLAN or to device administration
+ deny ip any 192.168.10.0 0.0.0.255
+ deny tcp any 192.168.0.0 0.0.255.255 eq 22
+ deny tcp any 192.168.0.0 0.0.255.255 eq telnet
+ deny ip any 10.0.0.0 0.255.255.255
+ remark Finance application is restricted to FINANCE and EXECUTIVE
+ deny tcp any host 192.168.60.40
+ remark IT support may reach all other internal VLANs, servers and the Internet
+ permit ip 192.168.20.0 0.0.0.255 any
+ deny ip any any
+!
+ip access-list extended VLAN30_HR_IN
+ remark DHCP discover/request (relayed to SRV-DC01)
+ permit udp any eq bootpc any eq bootps
+ remark Ping own default gateway
+ permit icmp 192.168.30.0 0.0.0.255 host 192.168.30.1 echo
+ remark Replies to MANAGEMENT and IT support sessions
+ permit icmp 192.168.30.0 0.0.0.255 192.168.10.0 0.0.0.255 echo-reply
+ permit icmp 192.168.30.0 0.0.0.255 192.168.20.0 0.0.0.255 echo-reply
+ permit tcp 192.168.30.0 0.0.0.255 192.168.10.0 0.0.0.255 established
+ permit tcp 192.168.30.0 0.0.0.255 192.168.20.0 0.0.0.255 established
+ remark Approved services - DNS, intranet web, file server, ping servers
+ permit udp 192.168.30.0 0.0.0.255 host 192.168.60.10 eq domain
+ permit tcp 192.168.30.0 0.0.0.255 host 192.168.60.10 eq domain
+ permit tcp 192.168.30.0 0.0.0.255 host 192.168.60.20 eq www
+ permit tcp 192.168.30.0 0.0.0.255 host 192.168.60.20 eq 443
+ permit tcp 192.168.30.0 0.0.0.255 host 192.168.60.30 eq ftp
+ permit icmp 192.168.30.0 0.0.0.255 192.168.60.0 0.0.0.255 echo
+ remark Block every other internal and private destination
+ deny ip any 192.168.0.0 0.0.255.255
+ deny ip any 10.0.0.0 0.255.255.255
+ deny ip any 172.16.0.0 0.15.255.255
+ remark Internet access (all private ranges are already denied above)
+ permit ip 192.168.30.0 0.0.0.255 any
+ deny ip any any
+!
+ip access-list extended VLAN40_FIN_IN
+ remark DHCP discover/request (relayed to SRV-DC01)
+ permit udp any eq bootpc any eq bootps
+ remark Ping own default gateway
+ permit icmp 192.168.40.0 0.0.0.255 host 192.168.40.1 echo
+ remark Replies to MANAGEMENT and IT support sessions
+ permit icmp 192.168.40.0 0.0.0.255 192.168.10.0 0.0.0.255 echo-reply
+ permit icmp 192.168.40.0 0.0.0.255 192.168.20.0 0.0.0.255 echo-reply
+ permit tcp 192.168.40.0 0.0.0.255 192.168.10.0 0.0.0.255 established
+ permit tcp 192.168.40.0 0.0.0.255 192.168.20.0 0.0.0.255 established
+ remark Approved services - DNS, intranet web, file server, ping servers
+ permit udp 192.168.40.0 0.0.0.255 host 192.168.60.10 eq domain
+ permit tcp 192.168.40.0 0.0.0.255 host 192.168.60.10 eq domain
+ permit tcp 192.168.40.0 0.0.0.255 host 192.168.60.20 eq www
+ permit tcp 192.168.40.0 0.0.0.255 host 192.168.60.20 eq 443
+ permit tcp 192.168.40.0 0.0.0.255 host 192.168.60.30 eq ftp
+ permit icmp 192.168.40.0 0.0.0.255 192.168.60.0 0.0.0.255 echo
+ remark Sensitive finance application (HTTPS only)
+ permit tcp 192.168.40.0 0.0.0.255 host 192.168.60.40 eq 443
+ remark Block every other internal and private destination
+ deny ip any 192.168.0.0 0.0.255.255
+ deny ip any 10.0.0.0 0.255.255.255
+ deny ip any 172.16.0.0 0.15.255.255
+ remark Internet access (all private ranges are already denied above)
+ permit ip 192.168.40.0 0.0.0.255 any
+ deny ip any any
+!
+ip access-list extended VLAN50_USERS_IN
+ remark DHCP discover/request (relayed to SRV-DC01)
+ permit udp any eq bootpc any eq bootps
+ remark Ping own default gateway
+ permit icmp 192.168.50.0 0.0.0.255 host 192.168.50.1 echo
+ remark Replies to MANAGEMENT and IT support sessions
+ permit icmp 192.168.50.0 0.0.0.255 192.168.10.0 0.0.0.255 echo-reply
+ permit icmp 192.168.50.0 0.0.0.255 192.168.20.0 0.0.0.255 echo-reply
+ permit tcp 192.168.50.0 0.0.0.255 192.168.10.0 0.0.0.255 established
+ permit tcp 192.168.50.0 0.0.0.255 192.168.20.0 0.0.0.255 established
+ remark Approved services - DNS, intranet web, file server, ping servers
+ permit udp 192.168.50.0 0.0.0.255 host 192.168.60.10 eq domain
+ permit tcp 192.168.50.0 0.0.0.255 host 192.168.60.10 eq domain
+ permit tcp 192.168.50.0 0.0.0.255 host 192.168.60.20 eq www
+ permit tcp 192.168.50.0 0.0.0.255 host 192.168.60.20 eq 443
+ permit tcp 192.168.50.0 0.0.0.255 host 192.168.60.30 eq ftp
+ permit icmp 192.168.50.0 0.0.0.255 192.168.60.0 0.0.0.255 echo
+ remark Block every other internal and private destination
+ deny ip any 192.168.0.0 0.0.255.255
+ deny ip any 10.0.0.0 0.255.255.255
+ deny ip any 172.16.0.0 0.15.255.255
+ remark Internet access (all private ranges are already denied above)
+ permit ip 192.168.50.0 0.0.0.255 any
+ deny ip any any
+!
+ip access-list extended VLAN70_GUEST_IN
+ remark DHCP discover/request (relayed to SRV-DC01)
+ permit udp any eq bootpc any eq bootps
+ remark Ping own default gateway
+ permit icmp 192.168.70.0 0.0.0.255 host 192.168.70.1 echo
+ remark Guests are isolated from ALL internal and private networks
+ deny ip any 192.168.0.0 0.0.255.255
+ deny ip any 10.0.0.0 0.255.255.255
+ deny ip any 172.16.0.0 0.15.255.255
+ remark Internet only (guest DNS is the public resolver 203.0.113.10)
+ permit ip 192.168.70.0 0.0.0.255 any
+ deny ip any any
+!
+ip access-list extended VLAN80_EXEC_IN
+ remark DHCP discover/request (relayed to SRV-DC01)
+ permit udp any eq bootpc any eq bootps
+ remark Ping own default gateway
+ permit icmp 192.168.80.0 0.0.0.255 host 192.168.80.1 echo
+ remark Replies to MANAGEMENT and IT support sessions
+ permit icmp 192.168.80.0 0.0.0.255 192.168.10.0 0.0.0.255 echo-reply
+ permit icmp 192.168.80.0 0.0.0.255 192.168.20.0 0.0.0.255 echo-reply
+ permit tcp 192.168.80.0 0.0.0.255 192.168.10.0 0.0.0.255 established
+ permit tcp 192.168.80.0 0.0.0.255 192.168.20.0 0.0.0.255 established
+ remark Approved services - DNS, intranet web, file server, ping servers
+ permit udp 192.168.80.0 0.0.0.255 host 192.168.60.10 eq domain
+ permit tcp 192.168.80.0 0.0.0.255 host 192.168.60.10 eq domain
+ permit tcp 192.168.80.0 0.0.0.255 host 192.168.60.20 eq www
+ permit tcp 192.168.80.0 0.0.0.255 host 192.168.60.20 eq 443
+ permit tcp 192.168.80.0 0.0.0.255 host 192.168.60.30 eq ftp
+ permit icmp 192.168.80.0 0.0.0.255 192.168.60.0 0.0.0.255 echo
+ remark Executives may use the finance application (HTTPS only)
+ permit tcp 192.168.80.0 0.0.0.255 host 192.168.60.40 eq 443
+ remark Block every other internal and private destination
+ deny ip any 192.168.0.0 0.0.255.255
+ deny ip any 10.0.0.0 0.255.255.255
+ deny ip any 172.16.0.0 0.15.255.255
+ remark Internet access (all private ranges are already denied above)
+ permit ip 192.168.80.0 0.0.0.255 any
+ deny ip any any
+!
+access-list 10 remark SSH to this device only from the MANAGEMENT VLAN
+access-list 10 permit 192.168.10.0 0.0.0.255
+access-list 10 deny any
+!
+! ---------------------------------------------------------------------
+! SVIs - default gateways for every VLAN. DHCP is relayed to SRV-DC01.
+! VLAN 99 (native) and VLAN 999 (parking) intentionally have no SVI.
+! ---------------------------------------------------------------------
+interface Vlan1
+ no ip address
+ shutdown
+interface Vlan10
+ description GW | VLAN 10 MANAGEMENT
+ ip address 192.168.10.1 255.255.255.0
+ ip access-group VLAN10_MGMT_IN in
+ no shutdown
+interface Vlan20
+ description GW | VLAN 20 IT
+ ip address 192.168.20.1 255.255.255.0
+ ip helper-address 192.168.60.10
+ ip access-group VLAN20_IT_IN in
+ no shutdown
+interface Vlan30
+ description GW | VLAN 30 HR
+ ip address 192.168.30.1 255.255.255.0
+ ip helper-address 192.168.60.10
+ ip access-group VLAN30_HR_IN in
+ no shutdown
+interface Vlan40
+ description GW | VLAN 40 FINANCE
+ ip address 192.168.40.1 255.255.255.0
+ ip helper-address 192.168.60.10
+ ip access-group VLAN40_FIN_IN in
+ no shutdown
+interface Vlan50
+ description GW | VLAN 50 USERS
+ ip address 192.168.50.1 255.255.255.0
+ ip helper-address 192.168.60.10
+ ip access-group VLAN50_USERS_IN in
+ no shutdown
+interface Vlan60
+ description GW | VLAN 60 SERVERS
+ ip address 192.168.60.1 255.255.255.0
+ no shutdown
+interface Vlan70
+ description GW | VLAN 70 GUEST (wireless)
+ ip address 192.168.70.1 255.255.255.0
+ ip helper-address 192.168.60.10
+ ip access-group VLAN70_GUEST_IN in
+ no shutdown
+interface Vlan80
+ description GW | VLAN 80 EXECUTIVE
+ ip address 192.168.80.1 255.255.255.0
+ ip helper-address 192.168.60.10
+ ip access-group VLAN80_EXEC_IN in
+ no shutdown
+!
+! ---------------------------------------------------------------------
+! Routed uplink to the firewall + default route
+! ---------------------------------------------------------------------
+interface FastEthernet0/24
+ description ROUTED | to FW-01 Gi1/2 (inside) | 10.0.0.4/30
+ no switchport
+ ip address 10.0.0.6 255.255.255.252
+ no shutdown
+ip route 0.0.0.0 0.0.0.0 10.0.0.5
+!
+! ---------------------------------------------------------------------
+! 802.1Q trunks to access switches (pruned, native VLAN 99, no DTP)
+! ---------------------------------------------------------------------
+interface GigabitEthernet0/1
+ description TRUNK | to ACCESS-SW1 Gi0/1
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,20,30,80,99
+ switchport nonegotiate
+ no shutdown
+interface GigabitEthernet0/2
+ description TRUNK | to ACCESS-SW2 Gi0/1
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,40,50,70,99
+ switchport nonegotiate
+ no shutdown
+!
+! ---------------------------------------------------------------------
+! Server access ports (VLAN 60) - PortFast, BPDU Guard, sticky port security
+! ---------------------------------------------------------------------
+interface range FastEthernet0/1 - 4
+ switchport mode access
+ switchport access vlan 60
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ switchport port-security
+ switchport port-security maximum 1
+ switchport port-security mac-address sticky
+ switchport port-security violation shutdown
+ no shutdown
+interface FastEthernet0/1
+ description ACCESS | SRV-DC01 | VLAN 60
+interface FastEthernet0/2
+ description ACCESS | SRV-WEB | VLAN 60
+interface FastEthernet0/3
+ description ACCESS | SRV-FILE | VLAN 60
+interface FastEthernet0/4
+ description ACCESS | SRV-FINAPP | VLAN 60
+!
+! Unused ports - parked in black-hole VLAN 999 and shut down
+interface range FastEthernet0/5 - 23
+ description UNUSED - parked VLAN 999
+ switchport mode access
+ switchport access vlan 999
+ shutdown
+!
+! ---------------------------------------------------------------------
+! Secure management
+! ---------------------------------------------------------------------
+crypto key generate rsa general-keys modulus 1024
+ip ssh version 2
+ip ssh time-out 60
+ip ssh authentication-retries 3
+line con 0
+ exec-timeout 10 0
+ logging synchronous
+ login local
+line vty 0 15
+ exec-timeout 10 0
+ login local
+ transport input ssh
+ access-class 10 in
+!
+ntp server 192.168.60.10
+logging host 192.168.60.10
+logging trap informational
+end
+write memory

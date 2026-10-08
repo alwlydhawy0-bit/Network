@@ -1,0 +1,43 @@
+! =====================================================================
+!  ISP-R1  |  Simulated Internet Service Provider  |  Cisco 2911
+!  Paste from the "Router>" prompt (CLI tab). Lines starting with "!"
+!  are comments and are ignored by IOS.
+! =====================================================================
+enable
+configure terminal
+hostname ISP-R1
+no ip domain-lookup
+ip domain-name isp.example
+service password-encryption
+enable secret EnaSecret2026
+username ispadmin privilege 15 secret IspAdmin2026
+banner motd # ISP-R1 - Simulated Internet provider. Authorized access only. #
+!
+interface GigabitEthernet0/0
+ description WAN | Customer CORP - EDGE-R1 Gi0/0 | 198.51.100.0/30
+ ip address 198.51.100.1 255.255.255.252
+ no shutdown
+interface GigabitEthernet0/1
+ description LAN | Internet server segment 203.0.113.0/24
+ ip address 203.0.113.1 255.255.255.0
+ no shutdown
+interface GigabitEthernet0/2
+ description UNUSED
+ shutdown
+!
+! Deliberately NO route to 192.168.0.0/16: private addresses are not routable
+! on the Internet. Only the customer's public /30 (directly connected) is known,
+! which is exactly why EDGE-R1 must perform NAT/PAT.
+!
+crypto key generate rsa general-keys modulus 1024
+ip ssh version 2
+line con 0
+ exec-timeout 10 0
+ logging synchronous
+ login local
+line vty 0 4
+ exec-timeout 10 0
+ login local
+ transport input ssh
+end
+write memory

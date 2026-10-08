@@ -1,0 +1,134 @@
+! =====================================================================
+!  ACCESS-SW1  |  Access switch (Floor 1: MGMT, IT, HR, EXECUTIVE)  |  Cisco 2960-24TT
+!  Paste from the "Switch>" prompt (CLI tab).
+! =====================================================================
+enable
+configure terminal
+hostname ACCESS-SW1
+no ip domain-lookup
+ip domain-name corp.local
+service password-encryption
+service timestamps log datetime msec
+enable secret EnaSecret2026
+username netadmin privilege 15 secret NetAdmin2026
+banner motd # AUTHORIZED ACCESS ONLY - CORP device ACCESS-SW1. All activity is logged. #
+!
+! ---------------------------------------------------------------------
+! VLANs (VTP transparent - same VLAN database on every switch)
+! ---------------------------------------------------------------------
+vtp mode transparent
+vlan 10
+ name MANAGEMENT
+vlan 20
+ name IT
+vlan 30
+ name HR
+vlan 40
+ name FINANCE
+vlan 50
+ name USERS
+vlan 60
+ name SERVERS
+vlan 70
+ name GUEST
+vlan 80
+ name EXECUTIVE
+vlan 99
+ name NATIVE
+vlan 999
+ name PARKING
+exit
+spanning-tree mode rapid-pvst
+!
+! ---------------------------------------------------------------------
+! Management SVI (VLAN 10) - the switch is managed only via VLAN 10
+! ---------------------------------------------------------------------
+interface Vlan1
+ no ip address
+ shutdown
+interface Vlan10
+ description MGMT | ACCESS-SW1 management address
+ ip address 192.168.10.11 255.255.255.0
+ no shutdown
+ip default-gateway 192.168.10.1
+!
+! ---------------------------------------------------------------------
+! Uplink trunk to CORE-SW1 (pruned, native VLAN 99, no DTP)
+! ---------------------------------------------------------------------
+interface GigabitEthernet0/1
+ description TRUNK | to CORE-SW1 Gi0/1
+ switchport mode trunk
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,20,30,80,99
+ switchport nonegotiate
+ no shutdown
+!
+! ---------------------------------------------------------------------
+! End-host access ports - PortFast, BPDU Guard, sticky port security
+! (1 MAC per port; a second device on the port err-disables it)
+! ---------------------------------------------------------------------
+interface range FastEthernet0/1 - 6
+ switchport mode access
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ switchport port-security
+ switchport port-security maximum 1
+ switchport port-security mac-address sticky
+ switchport port-security violation shutdown
+ no shutdown
+interface FastEthernet0/1
+ description ACCESS | PC-MGMT-01 | VLAN 10
+ switchport access vlan 10
+interface FastEthernet0/2
+ description ACCESS | PC-IT-01 | VLAN 20
+ switchport access vlan 20
+interface FastEthernet0/3
+ description ACCESS | PC-IT-02 | VLAN 20
+ switchport access vlan 20
+interface FastEthernet0/4
+ description ACCESS | PC-HR-01 | VLAN 30
+ switchport access vlan 30
+interface FastEthernet0/5
+ description ACCESS | PC-HR-02 | VLAN 30
+ switchport access vlan 30
+interface FastEthernet0/6
+ description ACCESS | PC-EXEC-01 | VLAN 80
+ switchport access vlan 80
+!
+! Unused ports - parked in black-hole VLAN 999 and shut down
+interface range FastEthernet0/7 - 24
+ description UNUSED - parked VLAN 999
+ switchport mode access
+ switchport access vlan 999
+ shutdown
+interface GigabitEthernet0/2
+ description UNUSED - parked VLAN 999
+ switchport mode access
+ switchport access vlan 999
+ shutdown
+!
+! ---------------------------------------------------------------------
+! Secure management
+! ---------------------------------------------------------------------
+access-list 10 remark SSH to this device only from the MANAGEMENT VLAN
+access-list 10 permit 192.168.10.0 0.0.0.255
+access-list 10 deny any
+crypto key generate rsa general-keys modulus 1024
+ip ssh version 2
+ip ssh time-out 60
+ip ssh authentication-retries 3
+line con 0
+ exec-timeout 10 0
+ logging synchronous
+ login local
+line vty 0 15
+ exec-timeout 10 0
+ login local
+ transport input ssh
+ access-class 10 in
+!
+ntp server 192.168.60.10
+logging host 192.168.60.10
+logging trap informational
+end
+write memory

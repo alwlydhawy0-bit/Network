@@ -1,0 +1,65 @@
+! =====================================================================
+!  FW-01  |  Perimeter firewall (security boundary)  |  Cisco ASA 5506-X
+!
+!  HOW TO APPLY:
+!   1. In the CLI tab type:  enable   and press Enter at "Password:" (blank
+!      on a new ASA).  Do NOT paste "enable" - the password prompt would
+!      swallow the next pasted line.
+!   2. Run "show running-config". If you see "dhcpd enable inside", the
+!      factory DHCP server is active; the "no dhcpd" line below removes it.
+!   3. Paste everything from "configure terminal" downwards.
+!
+!  Inside (security 100) -> outside (security 0) is allowed by default and
+!  tracked statefully. Outside -> inside is denied except the explicit ACL.
+! =====================================================================
+configure terminal
+hostname FW-01
+domain-name corp.local
+enable password EnaSecret2026
+username netadmin password NetAdmin2026 privilege 15
+no dhcpd enable inside
+!
+interface GigabitEthernet1/1
+ nameif outside
+ security-level 0
+ ip address 10.0.0.2 255.255.255.252
+ no shutdown
+interface GigabitEthernet1/2
+ nameif inside
+ security-level 100
+ ip address 10.0.0.5 255.255.255.252
+ no shutdown
+!
+route outside 0.0.0.0 0.0.0.0 10.0.0.1 1
+route inside 192.168.0.0 255.255.0.0 10.0.0.6 1
+!
+! OUTSIDE_IN - only what must enter from the edge:
+!   ICMP error/reply messages (ping + traceroute from inside),
+!   EDGE-R1 -> SRV-DC01 for TACACS+ (49), syslog (514), NTP (123).
+access-list OUTSIDE_IN extended permit icmp any any echo-reply
+access-list OUTSIDE_IN extended permit icmp any any time-exceeded
+access-list OUTSIDE_IN extended permit icmp any any unreachable
+access-list OUTSIDE_IN extended permit tcp host 10.0.0.1 host 192.168.60.10 eq 49
+access-list OUTSIDE_IN extended permit udp host 10.0.0.1 host 192.168.60.10 eq 514
+access-list OUTSIDE_IN extended permit udp host 10.0.0.1 host 192.168.60.10 eq 123
+access-list OUTSIDE_IN extended deny ip any any
+access-group OUTSIDE_IN in interface outside
+!
+! Stateful inspection of common protocols (ICMP replies, DNS, HTTP, FTP)
+class-map inspection_default
+ match default-inspection-traffic
+policy-map global_policy
+ class inspection_default
+  inspect icmp
+  inspect dns
+  inspect http
+  inspect ftp
+service-policy global_policy global
+!
+! Secure management: SSH from MANAGEMENT VLAN only, local user database
+aaa authentication ssh console LOCAL
+crypto key generate rsa modulus 1024
+ssh 192.168.10.0 255.255.255.0 inside
+ssh timeout 10
+end
+write memory

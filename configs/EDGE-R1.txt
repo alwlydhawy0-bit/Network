@@ -1,0 +1,112 @@
+! =====================================================================
+!  EDGE-R1  |  Enterprise edge router (NAT/PAT, WAN ACL)  |  Cisco 2911
+!  Paste from the "Router>" prompt (CLI tab).
+! =====================================================================
+enable
+configure terminal
+hostname EDGE-R1
+no ip domain-lookup
+ip domain-name corp.local
+service password-encryption
+service timestamps log datetime msec
+security passwords min-length 10
+enable secret EnaSecret2026
+username netadmin privilege 15 secret NetAdmin2026
+banner motd # AUTHORIZED ACCESS ONLY - CORP device EDGE-R1. All activity is logged. #
+login block-for 120 attempts 3 within 60
+!
+! ---------------------------------------------------------------------
+! ACLs (defined before they are applied)
+! ---------------------------------------------------------------------
+access-list 1 remark NAT-ELIGIBLE internal VLANs (native VLAN 99 and transit links excluded)
+access-list 1 permit 192.168.10.0 0.0.0.255
+access-list 1 permit 192.168.20.0 0.0.0.255
+access-list 1 permit 192.168.30.0 0.0.0.255
+access-list 1 permit 192.168.40.0 0.0.0.255
+access-list 1 permit 192.168.50.0 0.0.0.255
+access-list 1 permit 192.168.60.0 0.0.0.255
+access-list 1 permit 192.168.70.0 0.0.0.255
+access-list 1 permit 192.168.80.0 0.0.0.255
+!
+access-list 10 remark SSH to this device only from the MANAGEMENT VLAN
+access-list 10 permit 192.168.10.0 0.0.0.255
+access-list 10 deny any
+!
+ip access-list extended WAN_IN
+ remark Anti-spoofing - private and loopback sources must never arrive from the Internet
+ deny ip 10.0.0.0 0.255.255.255 any
+ deny ip 172.16.0.0 0.15.255.255 any
+ deny ip 192.168.0.0 0.0.255.255 any
+ deny ip 127.0.0.0 0.255.255.255 any
+ remark Return traffic for sessions started from inside (stateless edge filter)
+ permit tcp any any established
+ permit udp any eq domain any
+ permit icmp any any echo-reply
+ permit icmp any any time-exceeded
+ permit icmp any any unreachable
+ remark Everything else initiated from the Internet is dropped
+ deny ip any any
+!
+! ---------------------------------------------------------------------
+! Interfaces
+! ---------------------------------------------------------------------
+interface GigabitEthernet0/0
+ description WAN | to ISP-R1 Gi0/0 | NAT outside
+ ip address 198.51.100.2 255.255.255.252
+ ip nat outside
+ ip access-group WAN_IN in
+ no cdp enable
+ no shutdown
+interface GigabitEthernet0/1
+ description TRANSIT | to FW-01 Gi1/1 (outside) | NAT inside
+ ip address 10.0.0.1 255.255.255.252
+ ip nat inside
+ no shutdown
+interface GigabitEthernet0/2
+ description UNUSED
+ shutdown
+!
+! ---------------------------------------------------------------------
+! Static routing (see docs/01-design.md for why OSPF is not used)
+! ---------------------------------------------------------------------
+ip route 0.0.0.0 0.0.0.0 198.51.100.1
+ip route 192.168.0.0 255.255.0.0 10.0.0.2
+ip route 10.0.0.4 255.255.255.252 10.0.0.2
+!
+! ---------------------------------------------------------------------
+! NAT / PAT - all internal VLANs overload the WAN interface address
+! ---------------------------------------------------------------------
+ip nat inside source list 1 interface GigabitEthernet0/0 overload
+!
+! ---------------------------------------------------------------------
+! AAA - TACACS+ on SRV-DC01 (identity simulation), local fallback
+! ---------------------------------------------------------------------
+aaa new-model
+tacacs-server host 192.168.60.10 key TacKey2026
+aaa authentication login default group tacacs+ local
+!
+! ---------------------------------------------------------------------
+! Secure management - SSH v2 only, VTY restricted to VLAN 10
+! ---------------------------------------------------------------------
+crypto key generate rsa general-keys modulus 1024
+ip ssh version 2
+ip ssh time-out 60
+ip ssh authentication-retries 3
+line con 0
+ exec-timeout 10 0
+ logging synchronous
+ login authentication default
+line vty 0 4
+ exec-timeout 10 0
+ login authentication default
+ transport input ssh
+ access-class 10 in
+!
+! ---------------------------------------------------------------------
+! Time and logging (SRV-DC01)
+! ---------------------------------------------------------------------
+ntp server 192.168.60.10
+logging host 192.168.60.10
+logging trap informational
+end
+write memory
